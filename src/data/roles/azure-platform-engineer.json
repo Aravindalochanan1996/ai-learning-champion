@@ -1,0 +1,425 @@
+{
+  "id": "azure-platform-engineer",
+  "title": "Senior Platform Engineer (Azure Focus)",
+  "tagline": "Turn Azure AI services into a governed, self-service product that application teams can consume without waiting on a ticket queue.",
+  "keyTools": [
+    "Terraform",
+    "AzureRM / AVM modules",
+    "AKS",
+    "Azure Container Apps",
+    "Azure OpenAI (Foundry Models)",
+    "Microsoft Foundry (Azure AI Foundry)",
+    "Azure AI Search",
+    "Document Intelligence",
+    "Azure APIM",
+    "Kong",
+    "GitHub Actions",
+    "OIDC / Workload Identity Federation",
+    "Azure Firewall",
+    "Private Link / Private Endpoint",
+    "Azure Policy",
+    "Checkov / OPA-Conftest",
+    "Microsoft Entra ID"
+  ],
+  "overview": "This is not an 'AI engineer' role — it is a platform engineering role where the product happens to be AI capability. The bank needs someone who can take Azure OpenAI, AI Search, Document Intelligence and agent/MCP patterns and turn them into paved-road infrastructure: Terraform modules, APIs, SDKs, and CI/CD pipelines that any application team inside the bank can consume safely without a platform engineer holding their hand. Interviewers are probing for three things: whether you actually think in terms of reusable, versioned platform primitives (modules, contracts, tenancy boundaries) rather than one-off deployments; whether you can translate regulator-driven constraints (data residency, network isolation, key management, auditability) into automated controls instead of manual review gates; and whether you have real scar tissue from running Kubernetes/serverless container platforms and API gateways in production, not just tutorial-level familiarity. A strong candidate frames every answer around 'how do I make this a repeatable, self-service, policy-enforced pattern' rather than 'how do I make this one deployment work' — and is explicit that the non-negotiables (Terraform, GitHub Actions, networking, IAM) are where they have the deepest scar tissue, while specific AI service knowledge is presented as fast-follow, backed by strong cloud architecture fundamentals.",
+  "sections": [
+    {
+      "id": "platform-architecture-boundaries",
+      "heading": "Platform Architecture: Boundaries, Contracts, and Tenancy",
+      "summary": "Covers how to design an internal AI platform as a product with clear service boundaries, tenancy isolation, and scaling models — the foundational thinking interviewers expect before you touch any specific Azure service.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "Building 'the Azure AI Platform as a reusable enterprise product' means treating application teams as customers, not just deployment targets. That requires explicit platform boundaries: what the platform team owns (landing zones, shared AI resources, network paths, identity model, observability pipeline) versus what application teams own (their business logic, prompts/agents, data mappings). Without this line, every team re-invents networking and security review, and the platform team becomes a bottleneck instead of an accelerator."
+        },
+        {
+          "type": "list",
+          "items": [
+            "Service contracts: versioned API/SDK surfaces (e.g. a 'chat-completion' internal API, an 'agent-runtime' contract) so application teams code against a stable interface even as the underlying Azure OpenAI/Foundry deployment changes.",
+            "Tenancy patterns: shared multi-tenant AI resources (one Azure OpenAI/Foundry resource behind APIM with per-team subscription keys and quotas) vs. dedicated-per-team resources for regulated workloads with data residency or noisy-neighbor concerns.",
+            "Scaling models: Provisioned Throughput Units (PTU) for predictable, latency-sensitive workloads vs. pay-as-you-go/standard deployments for bursty or exploratory workloads, load-balanced across regions via APIM backend pools.",
+            "Secure integration standards: every workload connects through private networking (Private Link), authenticates via managed identity (never API keys in app config), and is tagged/logged for chargeback and audit from day one.",
+            "Platform-as-product operating model: a roadmap, an onboarding journey (self-service request -> automated provisioning -> guardrails applied), release notes for platform changes, and a feedback loop with consuming teams."
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Tenancy Pattern", "When to Use", "Trade-off"],
+          "rows": [
+            ["Shared Foundry/OpenAI resource, APIM-fronted, per-team subscription keys", "Most internal teams; low-to-medium volume; cost efficiency matters", "Noisy-neighbor risk on rate limits; needs strong quota governance"],
+            ["Dedicated Foundry/OpenAI resource per business unit", "Regulated data domains (e.g. retail banking PII), strict data residency or model version pinning", "Higher cost, more resources to patch/monitor, but strongest isolation"],
+            ["Dedicated PTU deployment", "Latency-SLA-bound production workloads (fraud, customer chat)", "Capacity must be pre-purchased/reserved; needs careful capacity planning"],
+            ["Multi-region active-active", "Tier-1 customer-facing AI services requiring resilience", "Doubles data-residency and DR complexity; needs geo-routing at APIM/Front Door layer"]
+          ]
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "How would you define the boundary between what the platform team owns and what application teams own?",
+          "a": "I'd draw the line at anything that touches shared risk: networking, identity, the AI resource itself, logging/observability, and policy enforcement stay with the platform team because a mistake there affects everyone. Application teams own their business logic, prompt/agent design, and data transformations, consumed through a versioned API or SDK we publish. I'd formalize this as a RACI in the platform's documentation so there's no ambiguity when an incident happens — otherwise you get finger-pointing during a P1. The test I use is: if getting it wrong could take down or expose another team's workload, it belongs to the platform."
+        },
+        {
+          "q": "Why version your internal AI service contracts instead of letting teams call Azure OpenAI directly?",
+          "a": "Because Azure renames and re-shapes these services surprisingly often — Azure AI Foundry itself was rebranded and restructured, and model deprecations happen on a schedule outside our control. If forty application teams call the raw SDK directly, a breaking change becomes forty simultaneous fire drills. By publishing our own thin API/SDK with a versioned contract, we absorb that churn once, in one place, and give teams a deprecation window instead of a surprise outage. It also lets us inject cross-cutting concerns — auth, logging, cost tagging, content safety — without every team re-implementing them."
+        },
+        {
+          "q": "A team wants a dedicated Azure OpenAI resource instead of using the shared platform one. How do you decide?",
+          "a": "I'd ask three questions: does their data have a regulatory residency or segregation requirement that the shared resource can't meet, do they need model versions or fine-tunes that would conflict with other tenants, and is their traffic volume large and steady enough that dedicated PTU capacity is actually cheaper than shared pay-as-you-go. If none of those apply, I'd push back and keep them on the shared, governed path — every dedicated resource is another thing to patch, monitor, and audit, and it undermines the whole point of a shared platform. If they do qualify, I provision it through the same Terraform module and policy set as everything else, just with different parameters."
+        },
+        {
+          "q": "How do you handle a breaking change from Microsoft — like a Foundry API restructure — without breaking every downstream team?",
+          "a": "This is exactly why the internal contract layer exists. I absorb the change inside our SDK/API implementation, run it through our staging environment against a contract test suite that mirrors what consuming teams actually call, and ship a new minor version of our SDK with the old version still supported for a deprecation window. I'd also subscribe to Azure's service health and 'what's new' feeds for Foundry specifically, since that surface has changed branding and structure multiple times, and treat that monitoring as a first-class platform responsibility, not something we find out about from a broken team."
+        },
+        {
+          "q": "How would you design the scaling model so a single team's burst traffic doesn't starve everyone else?",
+          "a": "At the APIM layer I'd apply per-subscription rate limiting and TPM-based token-limit policies so no single caller can exhaust the shared quota, with 429s and Retry-After headers surfaced back cleanly. For workloads that need guaranteed throughput I'd move them to Provisioned Throughput Units instead of competing on the shared pay-as-you-go pool. And I'd back all of this with per-team usage dashboards so capacity planning is data-driven — if a team is consistently hitting their ceiling, that's a signal to either raise their quota deliberately or migrate them to dedicated capacity, not silently throttle them."
+        }
+      ]
+    },
+    {
+      "id": "shared-ai-capabilities-as-products",
+      "heading": "Shared AI Capabilities as Platform Products",
+      "summary": "How to package Azure OpenAI, AI Search, Document Intelligence, and agent/tool orchestration as standardized, consumable platform products rather than bespoke integrations per team.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "Microsoft has consolidated its AI application-development surface under Microsoft Foundry (the evolution of Azure AI Foundry), which now houses Foundry Models (including Azure OpenAI models), Foundry Agent Service for building and hosting agents, Foundry IQ as a central knowledge/retrieval layer that sits on top of Azure AI Search and other data sources, and Foundry Tools (which now includes Document Intelligence, rebranded toward Azure Content Understanding for some document/multimodal scenarios). A platform team's job is not to re-explain these services to every application team — it's to wrap them in a small number of standardized, opinionated products: a 'RAG-as-a-service' pattern (Document Intelligence -> chunking -> AI Search index -> grounded chat completion), an 'agent-hosting' pattern (Foundry Agent Service or a self-hosted MCP-tool agent on AKS/Container Apps), and a 'model access' pattern (APIM-fronted OpenAI/Foundry Models with quota and content-safety baked in)."
+        },
+        {
+          "type": "list",
+          "items": [
+            "Standardize access via one internal API/SDK per capability — a 'knowledge-retrieval' SDK wrapping AI Search/Foundry IQ, a 'document-extraction' SDK wrapping Document Intelligence, a 'chat-completion' SDK wrapping Foundry Models — so teams never call raw Azure SDKs directly in production.",
+            "Reference implementations: a golden-path repo template per pattern (RAG chatbot, document-classification pipeline, tool-calling agent) that teams fork instead of building from scratch, pre-wired with auth, logging, and network config.",
+            "MCP as the standard tool-integration contract: instead of every agent hardcoding calls to internal systems, expose internal capabilities (case lookup, KYC data, ledger queries) as governed MCP servers that any Foundry Agent Service or self-hosted agent can attach to.",
+            "Content safety and data governance as defaults, not opt-ins: Azure AI Content Safety wired into the shared chat-completion SDK, and Foundry IQ-based knowledge bases scoped to the requesting team's data-access permissions, not open to the whole tenant.",
+            "Cost and usage transparency: every shared capability tags its resource consumption to a cost-center/team via APIM subscription and Azure tags, feeding a shared FinOps dashboard."
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Capability", "Platform Product Shape", "What the Platform Standardizes"],
+          "rows": [
+            ["Azure OpenAI / Foundry Models", "Chat/completions SDK behind APIM", "Auth, TPM quotas, model version pinning, content safety, cost tagging"],
+            ["Azure AI Search / Foundry IQ", "Knowledge-retrieval SDK + indexing pipeline template", "Index schema conventions, chunking strategy, access-scoped retrieval, embeddings model version"],
+            ["Document Intelligence / Content Understanding", "Document-extraction SDK + async pipeline template", "Prebuilt vs custom model selection, PII redaction step, output schema, retry/poison-queue handling"],
+            ["Agent/tool orchestration", "Agent-hosting pattern (Foundry Agent Service or AKS/ACA + MCP)", "Tool registration via governed MCP servers, memory/session store, human-in-the-loop checkpoints"]
+          ]
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "How is Microsoft Foundry (Azure AI Foundry) related to Azure OpenAI, AI Search, and Document Intelligence?",
+          "a": "Microsoft Foundry is the umbrella enterprise AI platform — it's where Azure OpenAI models now live as 'Foundry Models,' where you build and host agents through Foundry Agent Service, and where a layer called Foundry IQ sits on top of retrieval sources like Azure AI Search to give agents a consistent, governed knowledge layer. Document Intelligence has moved under Foundry Tools and is converging with Azure Content Understanding for broader multimodal extraction. The way I'd explain it to a stakeholder: Foundry is the control plane and development experience, and OpenAI, AI Search, and Document Intelligence are capabilities you compose underneath it. Because this branding shifts fairly often, I always validate current service names and API shapes against Microsoft Learn before committing to an architecture, rather than relying on stale documentation."
+          },
+        {
+          "q": "Why wrap these services in your own internal SDKs instead of letting teams use the Azure SDKs directly?",
+          "a": "Three reasons: consistency, governance, and insulation from churn. If every team calls the Azure OpenAI SDK directly, each one re-implements retry logic, content-safety checks, and auth — and each one breaks independently when Microsoft changes something. By publishing our own thin SDK, we bake in the bank's non-negotiables — managed identity auth, content safety, cost tagging, audit logging — once, and we can evolve the underlying Azure service without every consuming team needing to change code. It also gives us a single choke point to enforce policy, like blocking a model version that hasn't passed our risk review."
+        },
+        {
+          "q": "How would you design a RAG pattern as a reusable platform product rather than a one-off project?",
+          "a": "I'd break it into three composable stages, each with its own template: ingestion (Document Intelligence or Content Understanding extracts text/structure from source documents, with a PII-redaction step before anything is indexed), indexing (a standard chunking strategy and embeddings model version feeding an AI Search index or a Foundry IQ knowledge source, scoped by data-access permissions), and retrieval-augmented generation (our chat-completion SDK pulls from that knowledge source and calls Foundry Models). I'd publish this as a reference-implementation repo with Terraform for the infra and a golden-path CI/CD pipeline, so a team building a new RAG use case forks the template and fills in their domain-specific documents rather than architecting from scratch. That also means when we improve the pattern — say, better chunking — every team benefits on their next template sync."
+        },
+        {
+          "q": "How do you use MCP servers to standardize how agents access internal bank systems?",
+          "a": "Rather than letting every agent team write bespoke integration code against, say, the core banking ledger or a KYC service, I'd have the platform team stand up governed MCP servers that expose those systems as tools with a defined, audited contract — authentication, rate limits, and data-scoping handled once at the MCP server layer. Any agent, whether built in Foundry Agent Service or self-hosted on AKS, then attaches to that MCP server the same way. This turns 'agent needs access to system X' from a bespoke integration project into a self-service catalog lookup, and it gives security one place to audit tool access instead of auditing every agent's code."
+        },
+        {
+          "q": "How do you prevent a shared knowledge base from leaking data across teams with different access permissions?",
+          "a": "Scoping has to happen at retrieval time, not just at ingestion time. I'd tag indexed content with the source system's access-control metadata and enforce security trimming in the AI Search or Foundry IQ query itself, filtering results to what the calling identity is actually entitled to see — using the same Entra ID groups or claims that gate the source system. I'd never rely on the LLM prompt to enforce this; that's a request-time authorization decision that belongs in the retrieval layer, the same way we'd guard any other data access path in a bank."
+        }
+      ]
+    },
+    {
+      "id": "iac-policy-as-code",
+      "heading": "Infrastructure as Code and Policy-as-Code",
+      "summary": "Reusable Terraform modules, automated validation for naming/SKU/network standards, and self-service provisioning through GitHub Actions — the mechanics of making 'paved road' infrastructure real.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "A platform product is only as good as its provisioning path. The goal is that an application team can request 'a standard AI workload landing zone' and get network isolation, identity, tagging, and observability baked in automatically — without a human reviewing every deployment. That means Terraform modules built for reuse (versioned, tested, published to a private registry), layered policy validation (Checkov/tfsec for out-of-the-box security checks, OPA/Conftest for the bank's own custom governance rules evaluated against the Terraform plan JSON, and Azure Policy as the runtime backstop that catches anything IaC missed or that was changed out-of-band), and a GitHub Actions-based self-service front door."
+        },
+        {
+          "type": "list",
+          "items": [
+            "Module design: small, composable modules (network, AI-resource, APIM-product, AKS-nodepool) versioned independently in a private Terraform registry, consumed via root 'landing zone' modules per workload type.",
+            "Testing: unit tests with Terraform's native `terraform test`, plan-time policy checks in CI (Checkov for CIS/security baselines, Conftest/OPA for org-specific rules like naming convention and approved SKU list), and integration tests in a sandbox subscription before promotion.",
+            "Controlled promotion: environments promoted dev -> test -> prod via separate GitHub Actions environments with required reviewers and separate Azure subscriptions/service connections per stage.",
+            "Policy as code layers: Checkov/tfsec catch generic misconfigurations pre-merge; OPA/Conftest enforce bank-specific rules (naming standards, tagging, approved SKUs, mandatory private endpoints) against the `terraform plan` JSON in CI; Azure Policy (deployIfNotExists / deny effects) enforces the same rules at the subscription/management-group level as a runtime backstop for drift or manual changes.",
+            "Self-service provisioning: a GitHub Actions reusable workflow, triggered by a PR against a config repo (or a thin internal portal/API that opens that PR), that plans and applies a parameterized module for a requested pattern (e.g. 'AI Search + private endpoint + APIM product') with automated policy gates before any human approval is needed."
+          ]
+        },
+        {
+          "type": "code",
+          "language": "hcl",
+          "code": "# modules/ai-workload-landing-zone/main.tf\n# Reusable module: standard network + identity + AI resource pattern\n\nmodule \"network\" {\n  source  = \"app.terraform.io/bank/network-spoke/azurerm\"\n  version = \"~> 3.2\"\n\n  spoke_name          = var.workload_name\n  hub_vnet_id         = var.hub_vnet_id\n  address_space       = var.address_space\n  enable_private_dns  = true\n  peer_to_hub_firewall = true\n}\n\nmodule \"foundry_openai\" {\n  source  = \"app.terraform.io/bank/ai-foundry-account/azurerm\"\n  version = \"~> 1.4\"\n\n  name                = \"aif-${var.workload_name}-${var.environment}\"\n  resource_group_name = azurerm_resource_group.this.name\n  location            = var.location\n\n  public_network_access_enabled = false\n\n  private_endpoint = {\n    subnet_id = module.network.private_endpoint_subnet_id\n  }\n\n  sku_name = var.approved_sku # validated by OPA policy against an allow-list\n\n  tags = local.mandatory_tags # cost_center, data_classification, owner, environment\n}\n\nresource \"azurerm_management_lock\" \"prod_lock\" {\n  count      = var.environment == \"prod\" ? 1 : 0\n  name       = \"prevent-delete\"\n  scope      = module.foundry_openai.id\n  lock_level = \"CanNotDelete\"\n}"
+        },
+        {
+          "type": "code",
+          "language": "rego",
+          "code": "# policy/naming_and_sku.rego — evaluated with Conftest against `terraform show -json plan.out`\n\npackage main\n\napproved_skus := {\"S0\", \"S1\", \"Standard\"}\n\ndeny[msg] {\n  resource := input.resource_changes[_]\n  resource.type == \"azurerm_cognitive_account\"\n  not approved_skus[resource.change.after.sku_name]\n  msg := sprintf(\"SKU '%s' is not on the approved list for %s\", [resource.change.after.sku_name, resource.address])\n}\n\ndeny[msg] {\n  resource := input.resource_changes[_]\n  resource.type == \"azurerm_cognitive_account\"\n  resource.change.after.public_network_access_enabled == true\n  msg := sprintf(\"%s must disable public network access (private endpoint required)\", [resource.address])\n}\n\ndeny[msg] {\n  resource := input.resource_changes[_]\n  startswith(resource.type, \"azurerm_\")\n  not regex.match(\"^[a-z]{2,4}-[a-z0-9-]+-(dev|test|prod)$\", resource.change.after.name)\n  msg := sprintf(\"%s does not follow naming convention <type>-<workload>-<env>\", [resource.address])\n}"
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "Walk me through your Terraform module design philosophy for a multi-team platform.",
+          "a": "I keep modules small and single-purpose — a network module, an AI-resource module, an APIM-product module — each versioned independently in a private registry, rather than one giant module that does everything. On top of those, I build a handful of opinionated 'landing zone' root modules that compose the small modules for common patterns, like an AI-workload landing zone. That way, application teams consume the landing zone module with a handful of inputs, but the platform team can patch or upgrade an individual building block, like the network module, without forcing every consumer to take a breaking change everywhere at once. Semantic versioning on each module is what makes that safe."
+        },
+        {
+          "q": "How do you enforce naming standards, approved SKUs, and network isolation automatically instead of relying on manual review?",
+          "a": "I layer three types of checks. First, Checkov or tfsec runs in CI on every PR for generic security misconfigurations — that's free coverage with no policy authoring. Second, I write our bank-specific rules — naming convention, approved SKU allow-list, mandatory private endpoints, required tags — as Rego policies evaluated with Conftest against the `terraform show -json` plan output, so they run before anything is applied. Third, I mirror the most critical of those same rules as Azure Policy definitions with deny or deployIfNotExists effects at the subscription or management-group level, so even a change made outside Terraform — say, someone flips public network access back on in the portal — gets caught or auto-remediated. The CI checks give fast feedback to developers; Azure Policy is the runtime backstop that assumes CI can be bypassed."
+        },
+        {
+          "q": "How would you build a self-service provisioning path so application teams don't file a ticket for every new AI resource?",
+          "a": "I'd expose the request as a pull request against a lightweight config repo — a YAML or HCL file describing 'I want an AI-workload landing zone named X in environment Y with these tags' — and a GitHub Actions reusable workflow triggered on that PR runs `terraform plan`, the Checkov and Conftest policy gates, and posts the plan and any policy failures as a PR comment. If everything passes, a designated approver (or, for pre-approved patterns within guardrails, an automated merge) triggers apply through a separate, more privileged workflow using OIDC federation scoped to that environment. The team never talks to a human on the platform side unless a policy gate fails or they need something outside the paved-road patterns — and even then, the failure message tells them exactly which rule they violated."
+        },
+        {
+          "q": "What's the difference between using Checkov, OPA/Conftest, and Azure Policy — why would you need all three?",
+          "a": "They operate at different points and with different authority. Checkov ships thousands of pre-built security and compliance checks, so it's the fastest way to catch generic misconfigurations with zero policy-authoring effort. OPA/Conftest is where I encode the bank's own governance — things no generic tool would know, like our internal naming convention or which SKUs are pre-approved by risk — and it's cloud-agnostic Rego, so the same skill set covers other platforms if we expand. Azure Policy is different in kind: it's not a CI-time gate, it's a control-plane-level enforcement and audit mechanism that catches drift, manual changes, and anything deployed outside our pipelines entirely. I use CI-time tools to give developers fast feedback and Azure Policy as the non-negotiable backstop a regulator would actually ask about."
+        },
+        {
+          "q": "How do you handle promotion of infrastructure changes from dev to production safely?",
+          "a": "Each environment is a separate GitHub Actions 'environment' with its own protection rules — required reviewers for prod, and a separate Azure service connection scoped via OIDC to that environment's subscription only, so a dev pipeline literally cannot touch prod credentials. The same Terraform module version and the same plan artifact get promoted through dev, test, and prod rather than re-running `terraform plan` fresh in each — that avoids drift between what was tested and what gets applied. Prod applies also carry a mandatory policy-gate pass and, for anything touching network or identity, a named human approval, even though the pipeline itself is otherwise fully automated."
+        },
+        {
+          "q": "Tell me about a time IaC policy caught something that would have been a real problem.",
+          "a": "In practice, the highest-value catches are usually the boring ones: someone copies an existing module block to stand up a new Cognitive Services account and forgets to flip public network access off, because the default in the raw resource is enabled. A Conftest rule that denies any `azurerm_cognitive_account` with `public_network_access_enabled = true` catches that at PR time, before it ever reaches a subscription, and the failure message tells the engineer exactly what to fix. That's the value of policy-as-code over a manual review checklist — it's consistent, it never gets tired at the end of a sprint, and it scales to however many teams are opening PRs against the platform."
+        }
+      ]
+    },
+    {
+      "id": "ai-runtime-engineering",
+      "heading": "AI Runtime Engineering: AKS and Azure Container Apps",
+      "summary": "Choosing and operating the right compute substrate for APIs, agents, MCP servers, and async workloads — a core hands-on skill area interviewers will scenario-test heavily.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "Both AKS and Azure Container Apps (ACA) can run agent APIs and MCP servers, but they solve different problems. ACA is built on Kubernetes and KEDA under the hood but abstracts it away — you get scale-to-zero, event-driven scaling (HTTP concurrency, queue depth), Dapr sidecars for service-to-service calls and pub/sub, and much lower operational overhead. AKS gives you the full Kubernetes API, GPU node pools, custom scheduling, and service mesh flexibility, at the cost of real day-2 operational burden even with AKS Automatic mode reducing some of it. Microsoft's own guidance frames the decision around whether you need direct Kubernetes API access or GPU-colocated model workloads (choose AKS) versus whether you're running request/response or event-driven agent and MCP workloads without those needs (choose Container Apps)."
+        },
+        {
+          "type": "list",
+          "items": [
+            "MCP servers as internal tools: ACA fits well because MCP servers are typically I/O-heavy, long-running-connection workloads (not short request/response functions), and ACA's internal service discovery plus managed identity support lets multiple MCP servers talk to each other and to Azure resources securely within one environment, without public exposure.",
+            "Async/agentic workloads: KEDA-based scaling in both AKS and ACA lets you scale worker pools on queue depth (Service Bus, Storage Queues) for background agent tasks — asynchronous document processing, batch embedding generation, long-running agent plans.",
+            "Cost profile: ACA is typically 3-5x cheaper than AKS at low-to-medium, bursty utilization because of scale-to-zero and per-second billing; AKS becomes more cost-efficient at sustained high utilization (~70%+) because you're paying for reserved node capacity either way.",
+            "GPU workloads: if you're self-hosting open-weight models or running embedding/inference workloads that need GPU node pools alongside your agents, AKS is the only one of the two that supports that colocation cleanly today.",
+            "Operational overhead is real even with AKS Automatic: node OS patching cadence, cluster upgrades, CNI/network policy choices, and RBAC all need ongoing platform ownership that a small team may not want to take on for every workload."
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Workload Pattern", "Recommended Runtime", "Why"],
+          "rows": [
+            ["Stateless agent/API, bursty traffic", "Azure Container Apps", "Scale-to-zero, per-second billing, managed ingress, lowest ops overhead"],
+            ["MCP servers exposing internal tools to multiple agents", "Azure Container Apps (same environment)", "Internal service discovery + Dapr + managed identity without public exposure"],
+            ["Agent + colocated GPU inference / fine-tuned open model", "AKS with GPU node pool", "Only AKS supports GPU node pools colocated with the workload"],
+            ["Async document/embedding pipeline, queue-driven", "Either (KEDA scaler); ACA if standalone, AKS if colocated with other cluster workloads", "Both scale on queue depth via KEDA; choice driven by what else you already run"],
+            ["High, sustained utilization (>70%) at large scale", "AKS", "Reserved node economics beat ACA per-second billing at sustained load"],
+            ["Team wants direct k8s API access, custom CRDs, service mesh", "AKS", "ACA intentionally abstracts the Kubernetes API away"]
+          ]
+        },
+        {
+          "type": "code",
+          "language": "yaml",
+          "code": "# Azure Container Apps: KEDA-based scaling rule for an MCP server\n# consuming from a Service Bus queue of tool-invocation requests\nscale:\n  minReplicas: 0\n  maxReplicas: 20\n  rules:\n    - name: servicebus-queue-scaler\n      custom:\n        type: azure-servicebus\n        metadata:\n          queueName: mcp-tool-invocations\n          messageCount: \"5\"\n        auth:\n          - secretRef: servicebus-connection\n            triggerParameter: connection\n\n# Dapr sidecar enabled so this MCP server can call another\n# internal MCP server via service invocation, not a public endpoint\ndapr:\n  enabled: true\n  appId: mcp-ledger-tools\n  appProtocol: http\n  appPort: 8080"
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "How do you decide between AKS and Azure Container Apps for an agent workload?",
+          "a": "I start from the workload's actual requirements, not a default preference. If it needs GPU colocation, direct Kubernetes API access, custom schedulers, or it's joining an existing cluster where other teams already run workloads, I go with AKS — the operational overhead is justified by real requirements. If it's a stateless agent API or an MCP server with bursty or unpredictable traffic, and the team doesn't want to own cluster upgrades and node patching, Container Apps wins — scale-to-zero and per-second billing make it three-to-five times cheaper at low-to-medium utilization, and Dapr plus managed identity gives me secure service-to-service calls without exposing internals publicly. Where I'd push back is a team defaulting to AKS out of habit or resume-driven development when their workload has no need for the Kubernetes API surface."
+        },
+        {
+          "q": "How would you host multiple MCP servers securely so agents can reach them without exposing them to the internet?",
+          "a": "I'd deploy them as separate container apps within the same Container Apps environment, which gives them internal service discovery — they can call each other by name without a public endpoint. I'd enable Dapr sidecars for the service-invocation and pub/sub building blocks rather than hand-rolling service-to-service auth, and use managed identities so each MCP server authenticates to Azure resources like Key Vault or Service Bus without any stored secrets. If some of those MCP servers instead need to run on an existing AKS cluster because they're colocated with GPU inference, I'd use a service mesh or just cluster-internal DNS plus network policies to achieve the same isolation, and put both behind the same APIM layer for external-facing access control."
+        },
+        {
+          "q": "At what point does AKS become more cost-effective than Container Apps?",
+          "a": "Roughly once sustained utilization gets above about seventy percent — at that point you're effectively paying for the equivalent of always-on node capacity either way, and AKS's reserved-instance and node-pool economics beat ACA's per-second consumption billing. Below that, especially for bursty or spiky traffic patterns, ACA's ability to scale to zero when idle wins clearly. I'd actually recommend starting workloads on ACA by default and only migrating to AKS once we have real utilization data showing sustained high load, rather than guessing upfront and over-provisioning a cluster for traffic that never materializes."
+        },
+        {
+          "q": "How do you handle asynchronous, long-running agent tasks — like a multi-step document-processing pipeline — on either platform?",
+          "a": "I'd decouple ingestion from processing with a queue — Service Bus or Storage Queues — so the API layer just accepts a request and enqueues work, rather than holding a long HTTP connection open. Worker containers, scaled with KEDA on queue depth, pick up the work; this pattern is identical whether the workers run on ACA or AKS, since both use KEDA scalers. I'd make each step idempotent and put a dead-letter queue in place for poison messages, since agent tool calls can fail in non-obvious ways — a malformed tool response shouldn't silently retry forever and burn token budget."
+        },
+        {
+          "q": "What operational overhead does 'AKS Automatic' actually remove, and what's left for the platform team?",
+          "a": "AKS Automatic handles a lot of the baseline cluster configuration — node provisioning, some security defaults, and simplified upgrade orchestration — which removes a chunk of the day-one setup burden. But the platform team still owns workload-level concerns: namespace and RBAC design, network policies, ingress and certificate management, monitoring and alerting integration, capacity planning for node pools including any GPU pools, and the upgrade cadence testing to make sure our own workloads survive a Kubernetes version bump. I'd frame it as: Automatic mode lowers the floor of Kubernetes expertise needed to get started, it doesn't eliminate the need for a team that owns the cluster's health long-term."
+        }
+      ]
+    },
+    {
+      "id": "api-connectivity",
+      "heading": "API and Connectivity: APIM and Kong Lifecycle Management",
+      "summary": "Managing API lifecycles for AI services with Azure APIM and Kong — including AI-specific gateway capabilities like token-rate limiting and semantic caching that are now core to this role.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "Both Azure API Management and Kong are legitimate choices, and the JD lists both because a bank's estate is rarely single-vendor — APIM is the natural default for an Azure-first shop because of its native Entra ID integration and managed PaaS model, while Kong's strength is portability across Kubernetes, multi-cloud, and hybrid environments via its plugin architecture. For AI workloads specifically, APIM has invested heavily in 'GenAI gateway' capabilities: provider-agnostic `llm-token-limit` and `llm-emit-token-metric` policies for enforcing tokens-per-minute quotas per consumer, `llm-semantic-cache-lookup`/`llm-semantic-cache-store` policies that use an embeddings backend to serve cached responses for semantically similar prompts, and backend-pool load balancing with circuit breakers across multiple Azure OpenAI/Foundry deployments to handle 429/503 responses gracefully."
+        },
+        {
+          "type": "table",
+          "headers": ["Dimension", "Azure APIM", "Kong"],
+          "rows": [
+            ["Deployment model", "Fully managed Azure PaaS control plane", "Self-managed (or Konnect-managed), runs anywhere including on-prem/multi-cloud"],
+            ["Identity integration", "Native, deep Microsoft Entra ID integration", "Plugin-based OIDC/OAuth2 integration, works with any IdP but more setup"],
+            ["Extensibility", "XML/C#-based policy language, first-party GenAI gateway policies", "100+ plugin ecosystem (Plugin Hub), Lua/Go plugin development"],
+            ["AI-specific features", "Native llm-token-limit, llm-semantic-cache, backend load balancing for OpenAI/Foundry", "AI Gateway plugins (rate limiting, semantic caching) via plugin ecosystem, provider-agnostic by design"],
+            ["Best fit", "Azure-first estate where compliance/identity alignment is non-negotiable", "Multi-cloud, Kubernetes-native, or hybrid estates needing portability"],
+            ["Operational overhead", "Low — managed service", "Higher — you own the data plane, DB (or DB-less), and upgrades"]
+          ]
+        },
+        {
+          "type": "list",
+          "items": [
+            "API lifecycle stages to standardize regardless of gateway: design (OpenAPI spec first), publish to a developer portal/catalog, versioning and deprecation policy, subscription/quota management, and retirement.",
+            "Use APIM 'products' to bundle related APIs (e.g. all Foundry Models endpoints) with a single subscription key and shared rate limit per consuming team.",
+            "Layer content-safety and PII-redaction policies at the gateway so every consumer gets them for free, rather than trusting each application team to implement them.",
+            "For Kong, use the same governance intent via its rate-limiting and AI-proxy/AI-gateway plugins, keeping policy logic as close to equivalent as possible if the bank runs both gateways in different domains."
+          ]
+        },
+        {
+          "type": "code",
+          "language": "xml",
+          "code": "<!-- APIM policy fragment: TPM quota + semantic cache + backend pool failover\n     for a shared Foundry Models (Azure OpenAI) product -->\n<policies>\n  <inbound>\n    <base />\n    <llm-token-limit counter-key=\"@(context.Subscription.Id)\"\n                      tokens-per-minute=\"20000\"\n                      estimate-prompt-tokens=\"true\"\n                      remaining-tokens-variable-name=\"remainingTokens\" />\n    <llm-semantic-cache-lookup score-threshold=\"0.05\"\n                               embeddings-backend-id=\"embeddings-backend\" />\n    <set-backend-service backend-id=\"openai-backend-pool\" />\n  </inbound>\n  <backend>\n    <retry condition=\"@(context.Response.StatusCode == 429 || context.Response.StatusCode == 503)\"\n           count=\"3\" interval=\"2\">\n      <forward-request buffer-request-body=\"true\" />\n    </retry>\n  </backend>\n  <outbound>\n    <llm-semantic-cache-store duration=\"300\" />\n    <llm-emit-token-metric namespace=\"platform-ai-usage\">\n      <dimension name=\"Subscription ID\" value=\"@(context.Subscription.Id)\" />\n      <dimension name=\"Team\" value=\"@(context.Subscription.Name)\" />\n    </llm-emit-token-metric>\n  </outbound>\n</policies>"
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "When would you choose Kong over Azure APIM for an internal API, given the bank is Azure-first?",
+          "a": "If the API needs to run in a hybrid or multi-cloud context — say, exposed identically from an on-prem data center and from Azure during a migration, or if the consuming team already runs Kong on Kubernetes elsewhere in the estate and wants a consistent operational model — Kong's portability wins. I'd also lean Kong if we need a very specific plugin from its ecosystem that APIM doesn't have a first-party equivalent for. But for the common case — an Azure-native AI service consumed by other Azure-native teams — I'd default to APIM specifically because of how deep its Entra ID integration is and because Microsoft is actively building GenAI-specific gateway policies into it, which reduces the custom work we'd otherwise do ourselves."
+        },
+        {
+          "q": "How would you protect a shared Azure OpenAI/Foundry deployment from one team consuming the entire token budget?",
+          "a": "I'd put APIM in front of it as the only path in, never let application teams hold a direct API key to the OpenAI resource itself. Then I'd apply the `llm-token-limit` policy scoped per subscription — effectively per consuming team — so each team has its own tokens-per-minute ceiling enforced at the gateway before the request ever reaches the model. When a team exceeds it, APIM returns a 429 with a Retry-After header rather than the raw Azure OpenAI throttling response, so client-side retry logic is predictable. I'd also emit token metrics per subscription via `llm-emit-token-metric` so we have the usage data to have an informed conversation with a team that's consistently maxing out their quota, instead of just silently throttling them forever."
+        },
+        {
+          "q": "What is semantic caching at the API gateway layer, and when is it actually worth the complexity?",
+          "a": "It's a cache that matches on meaning rather than exact request text — using an embeddings model to compute similarity between a new prompt and previously cached prompts, and serving the cached completion if they're close enough, via policies like `llm-semantic-cache-lookup` and `llm-semantic-cache-store`. It's worth it for high-volume, repetitive query patterns — a customer-support chatbot fielding similar questions from many customers, or a document-classification workload with recurring input patterns — where the cost and latency savings are significant. It's not worth it, and can actually be actively harmful, for workloads where responses need to be precise per unique input, like a financial calculation or a case-specific compliance answer, because you risk serving a 'close enough' cached answer where the difference actually matters."
+        },
+        {
+          "q": "How do you manage API versioning and deprecation across a portfolio of AI services teams depend on?",
+          "a": "I'd version at the product/API level in APIM — a new major version gets its own API definition and its own path or header-based version selector — and communicate deprecation through the developer portal with a firm sunset date, not an unannounced removal. I'd also track which subscriptions are still calling the deprecated version via the usage metrics we already emit through `llm-emit-token-metric` or standard APIM analytics, so I can proactively reach out to teams still on the old version instead of waiting for them to notice a broken integration on the day it's retired."
+        },
+        {
+          "q": "How would you design backend failover if one Azure OpenAI/Foundry region or deployment goes down?",
+          "a": "I'd configure an APIM backend pool with multiple Foundry Models deployments — ideally across regions — and a priority/weight configuration so traffic normally goes to the primary. In the backend policy, I'd add retry logic keyed on 429 and 503 responses that cycles to the next backend in the pool, with a circuit breaker so we stop hammering a backend that's clearly down rather than retrying into a failure. The key design point is doing this at the gateway, once, rather than expecting every consuming application to implement its own failover logic — that consistency is exactly what a shared platform is for."
+        }
+      ]
+    },
+    {
+      "id": "networking-security-compliance",
+      "heading": "Networking, Identity, and Compliance-as-Code",
+      "summary": "Hub-spoke networking, private connectivity for AI services, and translating regulatory/compliance requirements into automated controls — the area where 'bank' stops being generic and gets specific.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "For a regulated financial enterprise, the default posture is that no AI service — Azure OpenAI/Foundry, AI Search, Document Intelligence — is ever reachable over the public internet. The standard pattern is a hub-spoke topology: a hub VNet holding shared services (Azure Firewall, VPN/ExpressRoute gateway, DNS resolver), peered to spoke VNets that host individual workloads, with Private Endpoints (via Azure Private Link) exposing each AI resource's data plane as a private IP inside the spoke, resolved consistently across hub and spokes through centralized Private DNS zones linked to all VNets. All egress from a spoke to the internet or on-prem routes through the hub's Azure Firewall, giving one place to apply FQDN/service-tag based egress rules and centralized logging."
+        },
+        {
+          "type": "list",
+          "items": [
+            "Private Endpoint for every PaaS AI resource (Cognitive Services/AI Foundry account, AI Search, Storage for document pipelines) — disables public network access entirely, traffic stays on the Microsoft backbone.",
+            "Private DNS Zones (e.g. privatelink.openai.azure.com, privatelink.search.windows.net) linked to hub and all spoke VNets so FQDN resolution is consistent regardless of which VNet a workload sits in.",
+            "Hub-spoke VNet peering with 'gateway transit' and 'use remote gateways' configured correctly so spokes route through the hub's firewall/gateway rather than needing their own.",
+            "Identity over keys, always: managed identities (system- or user-assigned) for every workload calling an AI service, Entra ID RBAC on the resource, and Key Vault (itself behind a private endpoint) for anything that genuinely can't use managed identity.",
+            "Translating compliance into automated controls: data residency becomes an Azure Policy that denies resource creation outside approved regions; 'no public AI endpoints' becomes an Azure Policy deny/deployIfNotExists rule plus a Conftest check in CI; audit requirements become mandatory diagnostic settings streaming to a central Log Analytics workspace/Sentinel, enforced by policy so no resource can be created without them."
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Compliance/Risk Requirement", "Automated Control"],
+          "rows": [
+            ["No AI service reachable from public internet", "Azure Policy deny on public_network_access; Conftest rule blocking it pre-merge; NSG/Firewall deny-by-default egress"],
+            ["Data must stay in-region", "Azure Policy allowed-locations constraint at management-group scope"],
+            ["All access must be attributable to an identity, not a shared key", "Azure Policy auditing/denying resources with local auth enabled; mandatory managed identity in Terraform module"],
+            ["All AI resource activity must be auditable", "Policy-enforced diagnostic settings -> Log Analytics/Sentinel; APIM request logging with subscription/user correlation"],
+            ["Segregation between business units' AI workloads", "Separate spokes/subscriptions per business unit with dedicated Private DNS and NSGs; policy-enforced tagging for ownership"],
+            ["Change control / no manual portal changes", "Azure Policy denying resource modification outside a recognized deployment principal; branch protection + required reviewers in GitHub"]
+          ]
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "Describe how you'd design the network architecture for a new AI platform landing zone in a hub-spoke topology.",
+          "a": "I'd start from the existing hub, which already holds the Azure Firewall, the gateway to on-prem or other clouds, and centralized DNS resolution. I'd create a dedicated spoke VNet for the AI platform's shared resources, peer it to the hub with gateway transit enabled so its egress routes through the hub firewall, and place every AI PaaS resource — Foundry/OpenAI account, AI Search, the storage account backing document pipelines — behind a private endpoint inside that spoke. Private DNS zones for each of those services get linked to both the hub and every spoke that needs to resolve them, so an application team's spoke VNet resolves the AI resource's FQDN to a private IP no matter where it sits. Nothing about this pattern is AI-specific, honestly — it's the same hub-spoke discipline we'd apply to any sensitive PaaS resource, which is exactly the point: AI shouldn't get a special exception to network standards."
+        },
+        {
+          "q": "How do you translate a compliance requirement like 'customer data must never leave the approved region' into something enforced automatically rather than relying on a manual review?",
+          "a": "I'd encode it as an Azure Policy with an allowed-locations constraint applied at the management-group level covering the AI platform's subscriptions, so it's enforced no matter how a resource gets created — Terraform, portal, or anything else. I'd mirror that same rule as an OPA/Conftest check in CI so a Terraform plan targeting a disallowed region fails fast with a clear message before it ever reaches Azure. The policy is the actual control a regulator would ask to see evidence of; the CI check is just fast feedback for developers so they don't waste a pipeline run finding out the hard way."
+        },
+        {
+          "q": "Why use managed identity instead of API keys for AI service access, and how do you enforce that across a large platform?",
+          "a": "Keys are static secrets that can leak into logs, source control, or a misconfigured environment variable, and revoking one often means rotating it everywhere it's used. Managed identity ties access to the workload's actual identity in Entra ID, is scoped with normal RBAC, and never has a secret value that needs to be stored or rotated by a human. To enforce it platform-wide, I'd build 'managed identity required, key-based local auth disabled' directly into the Terraform module every team consumes, back it with an Azure Policy that audits or denies any Cognitive Services/AI Foundry account with local auth still enabled, and treat any exception request as something that needs an explicit, documented risk acceptance rather than a silent default."
+        },
+        {
+          "q": "How would you architect network isolation between two business units that both use the shared AI platform but must not access each other's data?",
+          "a": "I'd give each business unit its own spoke VNet — or in stricter cases its own subscription — peered to the shared hub but not to each other, so there's no network path between them by default. Their AI resources sit behind private endpoints scoped to their own spoke, with separate Private DNS zone group associations, and their APIM products/subscriptions are scoped so one business unit's credentials can't reach the other's backend pool. NSGs and Azure Firewall rules in the hub enforce that cross-spoke traffic is denied unless there's an explicit, documented business need — and I'd back all of that with policy-enforced tagging so ownership and data classification are unambiguous in every audit."
+        },
+        {
+          "q": "A security team asks how you'd prove, for an audit, that no AI resource has ever been exposed to the public internet. What's your answer?",
+          "a": "I'd point to two independent sources of evidence that corroborate each other. First, the Azure Policy compliance dashboard, since we'd have a deny or audit policy on public network access for every AI resource type in scope — that gives point-in-time and historical compliance state across the whole management group. Second, diagnostic logs and Azure Monitor/Sentinel alerts on any policy violation or any resource modification event, since we'd also enforce that diagnostic settings are mandatory. Between the two, we can show not just 'this is compliant right now' but 'here's the continuous evidence this has been true over time,' which is what an auditor actually wants — a policy without monitoring behind it is just a promise."
+        },
+        {
+          "q": "How do you keep Terraform-managed network and security config from drifting out of sync with manual changes made under incident pressure?",
+          "a": "First, I try to remove the temptation by making the self-service pipeline fast enough that nobody needs to go around it during an incident. Second, I use Azure Policy with deny effects on the highest-risk settings — public network access, NSG rules opening broad ranges — so even an emergency manual change is blocked unless it goes through an explicit break-glass process with its own audit trail. Third, I run a scheduled drift-detection job — `terraform plan` against production on a schedule, alerting if it shows unexpected diffs — so if something does get bypassed, we find out within hours, not at the next audit cycle."
+        }
+      ]
+    },
+    {
+      "id": "framing-your-experience",
+      "heading": "How to Talk About Your Experience in the Interview",
+      "summary": "Behavioral and system-design questions that test whether you can operate at the intersection of platform engineering, AI enablement, and banking-grade risk management — and how to frame your background credibly.",
+      "content": [
+        {
+          "type": "paragraph",
+          "text": "A bank's AI Center of Excellence is hiring a platform engineer, not a data scientist, and the interview will spend real time on whether you can be trusted with production infrastructure that touches customer data. The strongest framing is to lead with your infrastructure and security depth — Terraform, GitHub Actions, networking, identity — since the JD explicitly calls these non-negotiable, and to present AI-service specifics (Foundry, OpenAI, AI Search) as an area you learn fast because you already understand the underlying cloud architecture patterns they're built on. Expect deep scenario questions about designing for regulated environments, handling ambiguity when Microsoft's AI product surface shifts, and working with security/risk teams as partners rather than obstacles."
+        },
+        {
+          "type": "list",
+          "items": [
+            "Lead with concrete platform artifacts you've built: a Terraform module registry, a policy-as-code pipeline, a self-service provisioning workflow — name the tools and describe the before/after impact (e.g. 'provisioning went from a 2-week ticket to a 20-minute PR').",
+            "When AI-specific knowledge gaps come up, don't bluff — say plainly that you're strong on the platform/security side and are actively ramping on Foundry/OpenAI specifics, then demonstrate you understand the underlying patterns (RAG, agent orchestration, token-based rate limiting) even if exact service names are newer to you.",
+            "Bring a security/compliance-first narrative: talk about translating a real regulatory or audit requirement into an automated control, not just a technical preference.",
+            "Be ready to discuss trade-offs, not just 'best practices' — every senior platform question has a 'but here's when I'd do it differently' answer, and interviewers notice candidates who only have one tool in their toolbox."
+          ]
+        },
+        {
+          "type": "table",
+          "headers": ["Interviewer Signal They're Testing For", "How to Address It"],
+          "rows": [
+            ["Can you operate at platform scale, not project scale?", "Talk in terms of modules, contracts, and self-service, not individual deployments"],
+            ["Do you understand regulated-industry constraints?", "Reference data residency, private networking, auditability as defaults, not afterthoughts"],
+            ["Will you bluff on AI specifics you don't know?", "Be honest about depth, pivot to transferable architecture reasoning"],
+            ["Can you partner with security/risk teams?", "Frame policy-as-code and compliance automation as enabling velocity, not just gatekeeping"],
+            ["Do you have real production scar tissue?", "Use specific incidents/trade-offs, not textbook answers"]
+          ]
+        }
+      ],
+      "interviewQA": [
+        {
+          "q": "Tell me about a time you built something once that many teams then reused. What made it successful?",
+          "a": "I'd describe a concrete platform artifact — for example, a Terraform module for standing up a network-isolated PaaS resource with private endpoints, identity, and tagging built in — and focus on the adoption story: how many teams used it, how much time it saved versus their previous manual process, and what feedback loop I built to keep improving it. The part that actually made it successful wasn't the Terraform code itself, it was treating the module like a product — versioning it, documenting it, and actively going to teams to understand their unmet needs — rather than writing it once and assuming people would find it."
+        },
+        {
+          "q": "Describe a situation where a cloud provider changed or deprecated something you depended on. How did you handle it?",
+          "a": "I'd walk through a real example of adapting to a provider's shifting product surface — the key behaviors I'd highlight are: monitoring the provider's release notes and service health proactively rather than being surprised, having an abstraction layer (like our internal SDK pattern) that absorbed the change in one place, and communicating a clear timeline to affected teams instead of a silent behind-the-scenes fix. I'd emphasize that in a fast-moving product area like Azure's AI stack — which has seen real branding and structural changes recently — this kind of resilience to upstream churn is a designed-in property of the platform, not a lucky break."
+        },
+        {
+          "q": "How would you convince a skeptical application team to use the shared platform instead of provisioning their own resources directly?",
+          "a": "I wouldn't lead with a mandate — I'd lead with speed and safety: show them that going through the platform gets them a network-isolated, policy-compliant resource in minutes via a PR, versus weeks of manual security review if they go it alone. I'd also be honest about where the platform doesn't yet fit their need and take that as product feedback rather than getting defensive. If a team still insists on going around it, that's a signal for the platform team to figure out what gap in the self-service offering caused that, not just an enforcement problem to escalate."
+        },
+        {
+          "q": "You don't have deep hands-on experience with a specific Azure AI service mentioned in the JD. How do you handle that gap in the interview?",
+          "a": "I'd say directly that my depth is strongest on the platform and security side — Terraform, GitHub Actions, networking, identity — which the role itself calls non-negotiable, and that I understand the architectural patterns underneath the specific AI services, like retrieval-augmented generation, token-based rate limiting, and agent/tool orchestration via something like MCP, even where my hands-on time with the newest branded service is more limited. Then I'd demonstrate that understanding concretely — for instance, explaining how I'd wire Document Intelligence output into AI Search for a RAG pipeline — so it's clear the gap is about specific tooling exposure, not conceptual understanding, and that I close those gaps quickly given my architecture background."
+        },
+        {
+          "q": "Describe how you'd handle a disagreement with a security/risk team that wants to block a deployment you believe is safe.",
+          "a": "I'd start by assuming they have context I don't — risk and security teams in a bank are usually reacting to a real regulatory concern or a past incident, not being arbitrary. I'd ask them to articulate the specific control they need satisfied, then see if I can meet it through an automated policy rather than a manual exception — for example, if they're worried about data residency, encode it as an Azure Policy rather than arguing about the individual deployment. If we genuinely disagree after that, I'd escalate with a clear written trade-off rather than either overriding them or silently blocking my own team's progress — in a regulated environment, that documented trade-off often matters as much as the resolution itself."
+        },
+        {
+          "q": "How do you approach designing a system when you know the underlying platform (like Azure's AI product line) will keep changing under you?",
+          "a": "I design for replaceability at the boundaries: put a thin, versioned interface — an internal SDK or API — between application teams and any specific vendor service, so the volatile part is isolated behind something stable. I also invest in automated tests against that interface's contract, not against the vendor's specific implementation details, so a vendor-side change gets caught by a test failure in our layer, not a silent production bug. And I stay deliberately skeptical of documentation and training data that might be stale — for something like Azure's AI Foundry branding, which has shifted more than once, I'd always verify current capabilities against live Microsoft documentation before making an architecture commitment, rather than assuming what I learned six months ago still holds."
+        }
+      ]
+    }
+  ]
+}
